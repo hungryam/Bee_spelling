@@ -383,7 +383,6 @@ function makeDistractors(correct){
     if(low===correct.toLowerCase() || WORDSET.has(low) || set.has(m)) continue;
     set.add(m);
   }
-  // fallback: borrow real words (extremely unlikely)
   const others=shuffle(WORDS.map(w=>w[0]).filter(w=>w!==correct));
   for(const o of others){ if(set.size>=4) break; set.add(o); }
   return [...set];
@@ -405,8 +404,6 @@ function updateDesc(){
 }
 
 /* ---------- quiz engine ---------- */
-// kind: 'normal' (정규 퀴즈, 통계1·2에 반영) | 'review' (틀린 문제 복습) | 'weak' (하위 20% 복습)
-// 단어별 정답률은 모든 종류에서 누적, 정답률 그래프(통계1·2)는 'normal'만 반영
 let Q=null;
 $('startBtn').addEventListener('click',()=>{ audio(); startQuiz(mode); });
 $('retryBtn').addEventListener('click',()=>{
@@ -525,16 +522,14 @@ function submitSpell(){
   finishAnswer(ok,w,got);
 }
 
-function finishAnswer(ok,word,given,delay){
+function finishAnswer(ok,word,given){
   Q.log.push({w:word,ok,given});
-  // 단어별 누적 기록 (퀴즈1/2 별도)
   const wr=state.words[Q.mode];
   const rec=wr[word]||(wr[word]={c:0,t:0});
   rec.t++; if(ok) rec.c++;
   saveState();
   if(ok){ Q.correct++; $('scoreNow').textContent='♥ '+Q.correct; sndOk(); } else sndNo();
   flash(ok);
-  // 자동으로 넘어가지 않고 Next를 눌러야 다음 문제로 이동
   const nb=$('nextBtn');
   nb.textContent = (Q.idx+1>=Q.items.length) ? '결과 보기 →' : 'Next →';
   nb.hidden=false;
@@ -577,7 +572,7 @@ function finishQuiz(){
   show('result');
 }
 
-/* on-screen keyboard (lowercase) + physical keyboard */
+/* on-screen keyboard */
 (function buildKb(){
   const rows=['qwertyuiop','asdfghjkl','zxcvbnm'], kb=$('kb');
   rows.forEach((r,ri)=>{
@@ -596,42 +591,21 @@ function finishQuiz(){
 $('submitBtn').addEventListener('click',submitSpell);
 $('speaker').addEventListener('click',()=>{ if(Q&&Q.mode==='spell'){ stopMic(); speak(Q.items[Q.idx][0]); } });
 
-/* ---------- 마이크: 알파벳을 말하면 한 글자씩 인식 ---------- */
+/* ---------- mic speech recognition ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const mic = {on:false, rec:null, base:[], idle:0};
-// 알파벳 이름이 단어로 인식되는 경우 (see→c, bee→b ...)
 const LETTER_WORDS = {
-  ay:'a', eh:'a',
-  bee:'b', be:'b', bea:'b',
-  see:'c', sea:'c', cee:'c', si:'c',
-  dee:'d', de:'d',
-  ee:'e',
-  eff:'f', ef:'f',
-  gee:'g', jee:'g',
-  aitch:'h', age:'h',
-  eye:'i', aye:'i',
-  jay:'j', jae:'j',
-  kay:'k',
-  el:'l', ell:'l', elle:'l',
-  em:'m',
-  en:'n', and:'n',
-  oh:'o', owe:'o',
-  pee:'p', pea:'p',
-  cue:'q', queue:'q', kew:'q',
-  are:'r', ar:'r',
-  ess:'s', es:'s',
-  tea:'t', tee:'t', ti:'t',
-  you:'u', ewe:'u', yu:'u',
-  vee:'v',
-  doubleu:'w',
-  ex:'x',
-  why:'y', wye:'y',
-  zee:'z', zed:'z'
+  ay:'a', eh:'a', bee:'b', be:'b', bea:'b', see:'c', sea:'c', cee:'c', si:'c',
+  dee:'d', de:'d', ee:'e', eff:'f', ef:'f', gee:'g', jee:'g', aitch:'h', age:'h',
+  eye:'i', aye:'i', jay:'j', jae:'j', kay:'k', el:'l', ell:'l', elle:'l',
+  em:'m', en:'n', and:'n', oh:'o', owe:'o', pee:'p', pea:'p', cue:'q', queue:'q', kew:'q',
+  are:'r', ar:'r', ess:'s', es:'s', tea:'t', tee:'t', ti:'t', you:'u', ewe:'u', yu:'u',
+  vee:'v', doubleu:'w', ex:'x', why:'y', wye:'y', zee:'z', zed:'z'
 };
 function letterOf(t,raw){
   if(/^[a-z]$/.test(t)) return [t];
   if(LETTER_WORDS[t]) return [LETTER_WORDS[t]];
-  if(/^[A-Z]{2,}$/.test(raw)) return raw.toLowerCase().split('');   // "ABC" → a b c
+  if(/^[A-Z]{2,}$/.test(raw)) return raw.toLowerCase().split('');
   return [];
 }
 function parseLetters(text){
@@ -639,7 +613,7 @@ function parseLetters(text){
   const toks=text.replace(/[.,!?'"\-_]/g,' ').split(/\s+/).filter(Boolean);
   for(let i=0;i<toks.length;i++){
     const raw=toks[i], t=raw.toLowerCase();
-    if(t==='double'){                       // "double u" → w, "double l" → ll
+    if(t==='double'){
       const nr=toks[i+1]||'', n=nr.toLowerCase();
       if(n==='u'||n==='you'){ out.push('w'); i++; continue; }
       const L=letterOf(n,nr);
@@ -692,30 +666,26 @@ function micSession(){
       stopMic('마이크 확인 중… ('+code+')');
       diagMic(code);
     }
-    else if(e.error==='network')
-      stopMic('음성 인식에는 인터넷 연결이 필요해요.');
-    else if(e.error==='audio-capture')
-      stopMic('마이크를 찾을 수 없어요.');
-    // no-speech / aborted 는 onend 에서 처리
+    else if(e.error==='network') stopMic('음성 인식에는 인터넷 연결이 필요해요.');
+    else if(e.error==='audio-capture') stopMic('마이크를 찾을 수 없어요.');
   };
   rec.onend=()=>{
     if(mic.rec!==rec||!mic.on) return;
-    mic.base=Q.typed.slice();                        // 이번에 인식된 글자는 확정
+    mic.base=Q.typed.slice();
     if(mic.base.length>=letterCount()){ stopMic('다 말했어요! 맞으면 Submit을 눌러 주세요 ✔'); return; }
     if(!got && ++mic.idle>=3){ stopMic('말소리가 안 들려요. 🎤를 눌러 다시 시작하세요.'); return; }
-    setTimeout(micSession,200);                      // 계속 듣기
+    setTimeout(micSession,200);
   };
   try{ rec.start(); }catch(e){ stopMic('음성 인식을 시작할 수 없어요.'); }
 }
-// 음성 인식이 막혔을 때: 마이크 자체는 되는지 따로 확인해서 원인을 구분
 function diagMic(code){
   const gum=navigator.mediaDevices&&navigator.mediaDevices.getUserMedia;
-  if(!gum){ micStatus('음성 인식을 쓸 수 없는 화면이에요. 크롬/삼성 인터넷에서 열어 주세요. ['+code+', 마이크 API 없음]'); return; }
+  if(!gum){ micStatus('음성 인식을 쓸 수 없는 화면이에요. ['+code+']'); return; }
   navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{
     s.getTracks().forEach(t=>t.stop());
-    micStatus('마이크는 켜져 있는데 이 화면에서는 음성 인식이 막혀 있어요. 크롬이나 삼성 인터넷에서 직접 열어 보세요. ['+code+']');
+    micStatus('마이크 권한을 확인해 주세요. ['+code+']');
   }).catch(err=>{
-    micStatus('마이크 권한이 막혀 있어요. 브라우저 메뉴(⋮ 또는 ☰) → 설정 → 사이트 설정(권한) → 마이크에서 확인해 주세요. ['+code+' / '+(err&&err.name)+']');
+    micStatus('마이크 권한이 막혀 있어요. ['+code+']');
   });
 }
 $('micbtn').addEventListener('click',()=>{ if(mic.on) stopMic(); else startMic(); });
@@ -730,7 +700,7 @@ document.addEventListener('keydown',e=>{
 });
 if('speechSynthesis' in window) speechSynthesis.getVoices();
 
-/* ---------- weak-word review (하위 20%) ---------- */
+/* ---------- weak-word review ---------- */
 function weakItems(m){
   const rec=state.words[m];
   const tried=WORDS.filter(([w])=>rec[w]&&rec[w].t>0)
@@ -810,7 +780,6 @@ function renderStats(){
     d[h.mode].c+=h.correct; d[h.mode].t+=h.total;
   });
 
-  // weak-review buttons
   const nw=weakItems('word').length, ns=weakItems('spell').length;
   $('weakWord').textContent = nw ? 'Word 복습 · '+nw+'문제' : 'Word · 기록 없음';
   $('weakSpell').textContent = ns ? 'Spelling 복습 · '+ns+'문제' : 'Spelling · 기록 없음';
@@ -823,7 +792,6 @@ function renderStats(){
     $('chartLine').innerHTML='<div class="empty">아직 기록이 없어요.</div>';
     return;
   }
-  // bar chart
   const X0=50,X1=400,Y0=220,H=200;
   let g='';
   for(let p=0;p<=100;p+=20){
@@ -839,7 +807,6 @@ function renderStats(){
   });
   $('chartBar').innerHTML=`<svg viewBox="0 0 420 250">${g}</svg>`;
 
-  // line chart
   const dates=Object.keys(byDate).sort(), n=dates.length;
   const px=i=> n===1 ? (X0+X1)/2 : X0+i*(X1-X0-20)/(n-1)+10;
   let l='';
